@@ -1,0 +1,14 @@
+[
+  {"name": "show_id", "type": "STRING", "mode": "NULLABLE"},
+  {"name": "type", "type": "STRING", "mode": "NULLABLE"},
+  {"name": "title", "type": "STRING", "mode": "NULLABLE"},
+  {"name": "director", "type": "STRING", "mode": "NULLABLE"},
+  {"name": "cast", "type": "STRING", "mode": "NULLABLE"},
+  {"name": "country", "type": "STRING", "mode": "NULLABLE"},
+  {"name": "date_added", "type": "STRING", "mode": "NULLABLE"},
+  {"name": "release_year", "type": "INTEGER", "mode": "NULLABLE"},
+  {"name": "rating", "type": "STRING", "mode": "NULLABLE"},
+  {"name": "duration", "type": "STRING", "mode": "NULLABLE"},
+  {"name": "listed_in", "type": "STRING", "mode": "NULLABLE"},
+  {"name": "description", "type": "STRING", "mode": "NULLABLE"}
+]

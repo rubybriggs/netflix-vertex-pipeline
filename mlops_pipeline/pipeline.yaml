@@ -1,0 +1,343 @@
+# PIPELINE DEFINITION
+# Name: mustseemovies-mlops-pipeline
+# Description: End-to-end training, evaluation, and registry pipeline for mustseemovies.
+# Inputs:
+#    dataset_id: str [Default: 'mustseemovies']
+#    project_id: str [Default: 'mustseemovies']
+#    region: str [Default: 'us-central1']
+#    table_id: str [Default: 'cleaned']
+components:
+  comp-evaluate-model-component:
+    executorLabel: exec-evaluate-model-component
+    inputDefinitions:
+      artifacts:
+        model_artifact:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+        test_dataset:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+    outputDefinitions:
+      artifacts:
+        metrics:
+          artifactType:
+            schemaTitle: system.Metrics
+            schemaVersion: 0.0.1
+  comp-preprocess-mustseemovies-data:
+    executorLabel: exec-preprocess-mustseemovies-data
+    inputDefinitions:
+      parameters:
+        dataset_id:
+          parameterType: STRING
+        project_id:
+          parameterType: STRING
+        table_id:
+          parameterType: STRING
+    outputDefinitions:
+      artifacts:
+        test_dataset:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+        train_dataset:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+  comp-register-model-component:
+    executorLabel: exec-register-model-component
+    inputDefinitions:
+      artifacts:
+        model_artifact:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+      parameters:
+        model_display_name:
+          parameterType: STRING
+        project_id:
+          parameterType: STRING
+        region:
+          parameterType: STRING
+  comp-train-model-component:
+    executorLabel: exec-train-model-component
+    inputDefinitions:
+      artifacts:
+        train_dataset:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+    outputDefinitions:
+      artifacts:
+        model_artifact:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+defaultPipelineRoot: gs://mustseemovies-mlops-data/pipeline_root/
+deploymentSpec:
+  executors:
+    exec-evaluate-model-component:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - evaluate_model_component
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'pandas' 'scikit-learn'\
+          \ 'joblib'  &&  python3 -m pip install --quiet --no-warn-script-location\
+          \ 'kfp==2.17.0' '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"\
+          3.9\"' && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef evaluate_model_component(\n    test_dataset: Input[Dataset],\n\
+          \    model_artifact: Input[Model],\n    metrics: Output[Metrics]\n):\n \
+          \   import pandas as pd\n    import joblib\n    from sklearn.metrics import\
+          \ accuracy_score, precision_score, recall_score\n\n    # 1. Load test set\
+          \ & trained model\n    test_df = pd.read_csv(test_dataset.path)\n    y_test\
+          \ = test_df['type'].map({'Movie': 1, 'TV Show': 0})\n\n    text_cols = ['show_id',\
+          \ 'type', 'title', 'director', 'cast', 'country', 'date_added', 'rating',\
+          \ 'listed_in', 'description']\n    X_test = test_df.drop(columns=[col for\
+          \ col in text_cols if col in test_df.columns])\n    X_test = X_test.fillna(0)\n\
+          \n    # Load artifact path\n    clf = joblib.load(model_artifact.path)\n\
+          \n    # 2. Compute evaluation metrics\n    y_pred = clf.predict(X_test)\n\
+          \    acc = accuracy_score(y_test, y_pred)\n    prec = precision_score(y_test,\
+          \ y_pred, average='binary')\n    rec = recall_score(y_test, y_pred, average='binary')\n\
+          \n    # 3. Log metrics to Vertex AI Pipelines metadata\n    metrics.log_metric(\"\
+          accuracy\", float(acc))\n    metrics.log_metric(\"precision\", float(prec))\n\
+          \    metrics.log_metric(\"recall\", float(rec))\n\n    print(f\"Metrics\
+          \ Logged \u2014 Accuracy: {acc:.4f}, Precision: {prec:.4f}, Recall: {rec:.4f}\"\
+          )\n\n"
+        image: python:3.10
+    exec-preprocess-mustseemovies-data:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - preprocess_mustseemovies_data
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'google-cloud-bigquery'\
+          \ 'pandas' 'scikit-learn' 'db-dtypes'  &&  python3 -m pip install --quiet\
+          \ --no-warn-script-location 'kfp==2.17.0' '--no-deps' 'typing-extensions>=3.7.4,<5;\
+          \ python_version<\"3.9\"' && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef preprocess_mustseemovies_data(\n    project_id: str,\n    dataset_id:\
+          \ str,\n    table_id: str,\n    train_dataset: Output[Dataset],\n    test_dataset:\
+          \ Output[Dataset]\n):\n    import pandas as pd\n    from google.cloud import\
+          \ bigquery\n    from sklearn.model_selection import train_test_split\n\n\
+          \    client = bigquery.Client(project=project_id)\n    query = f\"SELECT\
+          \ * FROM `{project_id}.{dataset_id}.{table_id}`\"\n    df = client.query(query).to_dataframe()\n\
+          \n    train_df, test_df = train_test_split(df, test_size=0.2, random_state=42)\n\
+          \n    train_df.to_csv(train_dataset.path, index=False)\n    test_df.to_csv(test_dataset.path,\
+          \ index=False)\n    print(\"MustSeeMovies data split and preprocessed successfully.\"\
+          )\n\n"
+        image: python:3.10
+    exec-register-model-component:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - register_model_component
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'google-cloud-aiplatform'\
+          \  &&  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.17.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef register_model_component(\n    project_id: str,\n    region:\
+          \ str,\n    model_display_name: str,\n    model_artifact: Input[Model]\n\
+          ):\n    from google.cloud import aiplatform\n\n    aiplatform.init(project=project_id,\
+          \ location=region)\n\n    gcs_artifact_uri = model_artifact.uri.rsplit('/',\
+          \ 1)[0]\n\n    registered_model = aiplatform.Model.upload(\n        display_name=model_display_name,\n\
+          \        artifact_uri=gcs_artifact_uri,\n        serving_container_image_uri=\"\
+          us-docker.pkg.dev/vertex-ai/prediction/sklearn-cpu.1-3:latest\",\n     \
+          \   description=\"MustSeeMovies catalog classifier registered via Vertex\
+          \ AI Pipeline\"\n    )\n\n    print(f\"Model Registered Successfully! Resource\
+          \ Name: {registered_model.resource_name}\")\n\n"
+        image: python:3.10
+    exec-train-model-component:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - train_model_component
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'pandas' 'scikit-learn'\
+          \ 'joblib'  &&  python3 -m pip install --quiet --no-warn-script-location\
+          \ 'kfp==2.17.0' '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"\
+          3.9\"' && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef train_model_component(\n    train_dataset: Input[Dataset],\n\
+          \    model_artifact: Output[Model]\n):\n    import pandas as pd\n    import\
+          \ joblib\n    from sklearn.ensemble import RandomForestClassifier\n\n  \
+          \  # 1. Load train dataset artifact\n    df = pd.read_csv(train_dataset.path)\n\
+          \n    # 2. Separate features and target column ('type')\n    # Explicitly\
+          \ map text labels to numbers to prevent ValueError\n    y_train = df['type'].map({'Movie':\
+          \ 1, 'TV Show': 0})\n\n    # Drop target and non-numeric text descriptive\
+          \ features for basic modeling\n    text_cols = ['show_id', 'type', 'title',\
+          \ 'director', 'cast', 'country', 'date_added', 'rating', 'listed_in', 'description']\n\
+          \    X_train = df.drop(columns=[col for col in text_cols if col in df.columns])\n\
+          \n    # Fill any remaining null numeric values safely\n    X_train = X_train.fillna(0)\n\
+          \n    # 3. Train Model\n    clf = RandomForestClassifier(n_estimators=100,\
+          \ max_depth=5, random_state=42)\n    clf.fit(X_train, y_train)\n\n    #\
+          \ 4. Save serialized model artifact directly\n    joblib.dump(clf, model_artifact.path)\n\
+          \n"
+        image: python:3.10
+pipelineInfo:
+  description: End-to-end training, evaluation, and registry pipeline for mustseemovies.
+  name: mustseemovies-mlops-pipeline
+root:
+  dag:
+    tasks:
+      evaluate-model-component:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-evaluate-model-component
+        dependentTasks:
+        - preprocess-mustseemovies-data
+        - train-model-component
+        inputs:
+          artifacts:
+            model_artifact:
+              taskOutputArtifact:
+                outputArtifactKey: model_artifact
+                producerTask: train-model-component
+            test_dataset:
+              taskOutputArtifact:
+                outputArtifactKey: test_dataset
+                producerTask: preprocess-mustseemovies-data
+        taskInfo:
+          name: evaluate-model-component
+      preprocess-mustseemovies-data:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-preprocess-mustseemovies-data
+        inputs:
+          parameters:
+            dataset_id:
+              componentInputParameter: dataset_id
+            project_id:
+              componentInputParameter: project_id
+            table_id:
+              componentInputParameter: table_id
+        taskInfo:
+          name: preprocess-mustseemovies-data
+      register-model-component:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-register-model-component
+        dependentTasks:
+        - train-model-component
+        inputs:
+          artifacts:
+            model_artifact:
+              taskOutputArtifact:
+                outputArtifactKey: model_artifact
+                producerTask: train-model-component
+          parameters:
+            model_display_name:
+              runtimeValue:
+                constant: mustseemovies-catalog-classifier
+            project_id:
+              componentInputParameter: project_id
+            region:
+              componentInputParameter: region
+        taskInfo:
+          name: register-model-component
+      train-model-component:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-train-model-component
+        dependentTasks:
+        - preprocess-mustseemovies-data
+        inputs:
+          artifacts:
+            train_dataset:
+              taskOutputArtifact:
+                outputArtifactKey: train_dataset
+                producerTask: preprocess-mustseemovies-data
+        taskInfo:
+          name: train-model-component
+  inputDefinitions:
+    parameters:
+      dataset_id:
+        defaultValue: mustseemovies
+        isOptional: true
+        parameterType: STRING
+      project_id:
+        defaultValue: mustseemovies
+        isOptional: true
+        parameterType: STRING
+      region:
+        defaultValue: us-central1
+        isOptional: true
+        parameterType: STRING
+      table_id:
+        defaultValue: cleaned
+        isOptional: true
+        parameterType: STRING
+schemaVersion: 2.1.0
+sdkVersion: kfp-2.17.0

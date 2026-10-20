@@ -1,0 +1,76 @@
+{
+  "components": {
+    "comp-refresh-embeddings-component": {
+      "executorLabel": "exec-refresh-embeddings-component",
+      "inputDefinitions": {
+        "parameters": {
+          "project_id": {
+            "parameterType": "STRING"
+          }
+        }
+      }
+    }
+  },
+  "defaultPipelineRoot": "gs://netflixtitles-512209-my-custom-pipeline-bucket/pipeline_root",
+  "deploymentSpec": {
+    "executors": {
+      "exec-refresh-embeddings-component": {
+        "container": {
+          "args": [
+            "--executor_input",
+            "{{$}}",
+            "--function_to_execute",
+            "refresh_embeddings_component"
+          ],
+          "command": [
+            "sh",
+            "-c",
+            "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip || python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1 python3 -m pip install --quiet --no-warn-script-location 'google-cloud-bigquery'  &&  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.17.0' '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"$0\" \"$@\"\n",
+            "sh",
+            "-ec",
+            "program_path=$(mktemp -d)\n\nprintf \"%s\" \"$0\" > \"$program_path/ephemeral_component.py\"\n_KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         \"$program_path/ephemeral_component.py\"                         \"$@\"\n",
+            "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import *\n\ndef refresh_embeddings_component(project_id: str):\n    from google.cloud import bigquery\n    client = bigquery.Client(project=project_id)\n\n    query = \"\"\"\n    CREATE OR REPLACE TABLE `media_catalog.netflix_features` AS\n    SELECT \n        show_id, type, title, release_year, rating, listed_in, description,\n        ml_generate_embedding_result AS title_feature_vector\n    FROM ML.GENERATE_EMBEDDING(\n        MODEL `media_catalog.embedding_model`,\n        (\n            SELECT show_id, type, title, release_year, rating, listed_in, description,\n            CONCAT('Title: ', IFNULL(title, ''), '; Genres: ', IFNULL(listed_in, ''), '; Description: ', IFNULL(description, '')) AS content\n            FROM `media_catalog.netflix_raw`\n        ),\n        STRUCT('RETRIEVAL_DOCUMENT' AS task_type)\n    )\n    \"\"\"\n    query_job = client.query(query)\n    query_job.result()\n    print(\"Embeddings updated successfully.\")\n\n"
+          ],
+          "image": "python:3.11"
+        }
+      }
+    }
+  },
+  "pipelineInfo": {
+    "description": "A pipeline that refreshes BigQuery text embeddings for Netflix items",
+    "name": "netflix-recommendation-pipeline"
+  },
+  "root": {
+    "dag": {
+      "tasks": {
+        "refresh-embeddings-component": {
+          "cachingOptions": {
+            "enableCache": true
+          },
+          "componentRef": {
+            "name": "comp-refresh-embeddings-component"
+          },
+          "inputs": {
+            "parameters": {
+              "project_id": {
+                "componentInputParameter": "project_id"
+              }
+            }
+          },
+          "taskInfo": {
+            "name": "refresh-embeddings-component"
+          }
+        }
+      }
+    },
+    "inputDefinitions": {
+      "parameters": {
+        "project_id": {
+          "parameterType": "STRING"
+        }
+      }
+    }
+  },
+  "schemaVersion": "2.1.0",
+  "sdkVersion": "kfp-2.17.0"
+}
